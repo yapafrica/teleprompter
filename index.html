@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Teleprompter & Recorder</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: #1e293b;
+            --text-color: #f8fafc;
+            --accent-color: #3b82f6;
+            --danger-color: #ef4444;
+            --font-size: 28px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Top Control Bar */
+        header {
+            background: var(--panel-bg);
+            padding: 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #334155;
+            z-index: 10;
+        }
+
+        .controls-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        button, select {
+            background: #334155;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        button:active {
+            transform: scale(0.96);
+        }
+
+        button.record-btn {
+            background: var(--danger-color);
+        }
+
+        button.active-state {
+            background: var(--accent-color);
+        }
+
+        /* Main Workspace: 9:16 Preview Container */
+        .workspace {
+            flex: 1;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+            overflow: hidden;
+        }
+
+        /* 9:16 Aspect Ratio Frame */
+        .aspect-box {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            max-width: 450px;
+            max-height: 800px;
+            aspect-ratio: 9 / 16;
+            background: #111;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        @media (min-aspect-ratio: 9/16) {
+            .aspect-box {
+                height: 100vh;
+                width: calc(100vh * (9 / 16));
+            }
+        }
+
+        /* Camera / Background Layer */
+        #webcam {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        .virtual-bg-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            transition: background 0.3s ease;
+        }
+
+        /* Teleprompter Scrollable Text Area */
+        .prompter-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 40px 20px;
+            scroll-behavior: smooth;
+        }
+
+        .prompter-text {
+            font-size: var(--font-size);
+            line-height: 1.5;
+            color: rgba(255, 255, 255, 0.95);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            white-space: pre-wrap;
+            outline: none;
+            min-height: 80%;
+        }
+
+        /* Bottom Floating Settings Drawer */
+        .drawer {
+            background: rgba(30, 41, 59, 0.95);
+            backdrop-filter: blur(5px);
+            padding: 12px 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            border-top: 1px solid #334155;
+            z-index: 10;
+        }
+
+        .drawer-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .drawer-row label {
+            color: #94a3b8;
+        }
+
+        input[type="range"] {
+            width: 60%;
+        }
+
+        /* Status Indicator */
+        .rec-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #64748b;
+            margin-right: 5px;
+        }
+
+        .rec-indicator.recording {
+            background: var(--danger-color);
+            animation: pulse 1.2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.3); opacity: 0.6; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="controls-group">
+            <span class="rec-indicator" id="recIndicator"></span>
+            <strong id="statusText" style="font-size: 13px;">Ready</strong>
+        </div>
+        <div class="controls-group">
+            <button id="toggleCamBtn">Cam: Off</button>
+            <button id="recordBtn" class="record-btn">Record</button>
+        </div>
+    </header>
+
+    <div class="workspace">
+        <div class="aspect-box" id="aspectBox">
+            <!-- Virtual Backdrop Color Layer -->
+            <div id="virtualBg" class="virtual-bg-layer" style="background: transparent;"></div>
+            
+            <!-- Camera Video Feed -->
+            <video id="webcam" autoplay playsinline muted style="display:none;"></video>
+
+            <!-- Manual Scroll Teleprompter Area -->
+            <div class="prompter-overlay" id="prompterScroll">
+                <div class="prompter-text" contenteditable="true" id="scriptText">Tap here to type or paste your script.
+
+Scroll manually using your thumb up or down at any speed you prefer.
+
+Use the settings below to adjust font size, switch your backdrop color, turn on your camera, and record your video in 9:16 format!</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="drawer">
+        <div class="drawer-row">
+            <label>Font Size: <span id="fontSizeVal">28</span>px</label>
+            <input type="range" id="fontSizeRange" min="18" max="54" value="28">
+        </div>
+        <div class="drawer-row">
+            <label>Backdrop / Virtual BG:</label>
+            <select id="bgSelect">
+                <option value="transparent">Transparent / None</option>
+                <option value="#0f172a">Studio Dark</option>
+                <option value="#1e3a8a">Chroma Blue</option>
+                <option value="#065f46">Chroma Green</option>
+                <option value="#ffffff">Clean White</option>
+            </select>
+        </div>
+        <div class="drawer-row">
+            <label>Export Format:</label>
+            <select id="formatSelect">
+                <option value="mp4">MP4 (.mp4)</option>
+                <option value="webm">WebM (.webm)</option>
+            </select>
+        </div>
+    </div>
+
+    <script>
+        const scriptText = document.getElementById('scriptText');
+        const fontSizeRange = document.getElementById('fontSizeRange');
+        const fontSizeVal = document.getElementById('fontSizeVal');
+        const bgSelect = document.getElementById('bgSelect');
+        const formatSelect = document.getElementById('formatSelect');
+        const virtualBg = document.getElementById('virtualBg');
+        const webcam = document.getElementById('webcam');
+        const toggleCamBtn = document.getElementById('toggleCamBtn');
+        const recordBtn = document.getElementById('recordBtn');
+        const recIndicator = document.getElementById('recIndicator');
+        const statusText = document.getElementById('statusText');
+
+        let mediaStream = null;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let isRecording = false;
+
+        fontSizeRange.addEventListener('input', (e) => {
+            const size = e.target.value;
+            fontSizeVal.textContent = size;
+            document.documentElement.style.setProperty('--font-size', size + 'px');
+        });
+
+        bgSelect.addEventListener('change', (e) => {
+            virtualBg.style.background = e.target.value;
+        });
+
+        let useFrontCamera = true;
+        toggleCamBtn.addEventListener('click', async () => {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+                webcam.style.display = 'none';
+                toggleCamBtn.textContent = "Cam: Off";
+                toggleCamBtn.classList.remove('active-state');
+                return;
+            }
+
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: useFrontCamera ? 'user' : 'environment', aspectRatio: 9/16 },
+                    audio: true
+                });
+                webcam.srcObject = mediaStream;
+                webcam.style.display = 'block';
+                toggleCamBtn.textContent = "Cam: On";
+                toggleCamBtn.classList.add('active-state');
+            } catch (err) {
+                alert("Camera access error: " + err.message);
+            }
+        });
+
+        recordBtn.addEventListener('click', async () => {
+            if (!isRecording) {
+                try {
+                    let streamToRecord = mediaStream;
+                    if (!streamToRecord) {
+                        streamToRecord = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                    }
+
+                    recordedChunks = [];
+                    mediaRecorder = new MediaRecorder(streamToRecord, { mimeType: 'video/webm; codecs=vp8,opus' });
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) recordedChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        const chosenFormat = formatSelect.value;
+                        const mime = chosenFormat === 'mp4' ? 'video/mp4' : 'video/webm';
+                        const ext = chosenFormat;
+
+                        const blob = new Blob(recordedChunks, { type: mime });
+                        const url = URL.createObjectURL(blob);
+                        
+                        const a = document.createElement('a');
+                        a.style.display = 'none';
+                        a.href = url;
+                        a.download = `teleprompter-recording-${Date.now()}.${ext}`;
+                        document.body.appendChild(a);
+                        a.click();
+                        setTimeout(() => {
+                            document.body.removeChild(a);
+                            window.URL.revokeObjectURL(url);
+                        }, 100);
+
+                        statusText.textContent = "Saved to Downloads!";
+                    };
+
+                    mediaRecorder.start();
+                    isRecording = true;
+                    recordBtn.textContent = "Stop & Save";
+                    recordBtn.classList.add('active-state');
+                    recIndicator.classList.add('recording');
+                    statusText.textContent = "Recording...";
+                } catch (err) {
+                    alert("Could not start recorder: " + err.message);
+                }
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                recordBtn.textContent = "Record";
+                recordBtn.classList.remove('active-state');
+                recIndicator.classList.remove('recording');
+            }
+        });
+    </script>
+</body>
+</html>
