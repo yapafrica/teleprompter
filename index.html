@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Teleprompter & Recorder</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: #1e293b;
+            --text-color: #f8fafc;
+            --accent-color: #3b82f6;
+            --danger-color: #ef4444;
+            --font-size: 28px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Top Icon Control Bar */
+        header {
+            background: var(--panel-bg);
+            padding: 8px 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #334155;
+            z-index: 10;
+            gap: 6px;
+            overflow-x: auto;
+        }
+
+        .icon-group {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        button, select {
+            background: #334155;
+            color: white;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        button:active {
+            transform: scale(0.96);
+        }
+
+        button.record-btn {
+            background: var(--danger-color);
+        }
+
+        button.active-state {
+            background: var(--accent-color);
+        }
+
+        select {
+            padding: 6px;
+        }
+
+        /* Main Workspace: 9:16 Preview Container */
+        .workspace {
+            flex: 1;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+            overflow: hidden;
+        }
+
+        /* Strict 9:16 Aspect Ratio Frame */
+        .aspect-box {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            max-width: 450px;
+            max-height: 800px;
+            aspect-ratio: 9 / 16;
+            background: #111;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        @media (min-aspect-ratio: 9/16) {
+            .aspect-box {
+                height: 100vh;
+                width: calc(100vh * (9 / 16));
+            }
+        }
+
+        /* Preview Canvas & Hidden Elements */
+        #previewCanvas, .virtual-bg-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        #webcam {
+            display: none;
+        }
+
+        .virtual-bg-layer {
+            transition: background 0.3s ease;
+        }
+
+        /* Teleprompter Scrollable Text Area */
+        .prompter-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 30px 15px;
+            scroll-behavior: smooth;
+        }
+
+        .prompter-text {
+            font-size: var(--font-size);
+            line-height: 1.4;
+            color: rgba(255, 255, 255, 0.95);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            white-space: pre-wrap;
+            outline: none;
+            min-height: 80%;
+        }
+
+        /* Status & Indicator */
+        .rec-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #64748b;
+            display: inline-block;
+        }
+
+        .rec-indicator.recording {
+            background: var(--danger-color);
+            animation: pulse 1.2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.3); opacity: 0.6; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="icon-group">
+            <span class="rec-indicator" id="recIndicator"></span>
+            <button id="toggleCamBtn">📷 Cam Off</button>
+        </div>
+        <div class="icon-group">
+            <select id="bgSelect" title="Backdrop Color">
+                <option value="transparent">BG: None</option>
+                <option value="#0f172a">Dark</option>
+                <option value="#1e3a8a">Blue</option>
+                <option value="#065f46">Green</option>
+                <option value="#ffffff">White</option>
+            </select>
+            <select id="formatSelect" title="Format">
+                <option value="mp4">.mp4</option>
+                <option value="webm">.webm</option>
+            </select>
+            <select id="fontSizeSelect" title="Font Size">
+                <option value="24">24px</option>
+                <option value="28" selected>28px</option>
+                <option value="36">36px</option>
+                <option value="44">44px</option>
+            </select>
+        </div>
+        <div class="icon-group">
+            <button id="recordBtn" class="record-btn">🔴 Rec</button>
+        </div>
+    </header>
+
+    <div class="workspace">
+        <div class="aspect-box" id="aspectBox">
+            <!-- Virtual Backdrop Color Layer -->
+            <div id="virtualBg" class="virtual-bg-layer" style="background: transparent;"></div>
+            
+            <!-- Real-time 9:16 Rendered Canvas Preview -->
+            <canvas id="previewCanvas"></canvas>
+            
+            <!-- Hidden Raw Camera Feed -->
+            <video id="webcam" autoplay playsinline muted></video>
+
+            <!-- Manual Scroll Teleprompter Area -->
+            <div class="prompter-overlay" id="prompterScroll">
+                <div class="prompter-text" contenteditable="true" id="scriptText">Tap here to type or paste your script for YouTube Shorts / Reels.
+
+Scroll manually using your thumb up or down at any speed you prefer.
+
+Everything is packed neatly in the top control bar! Hit "Cam On" then "Rec" when ready.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const scriptText = document.getElementById('scriptText');
+        const fontSizeSelect = document.getElementById('fontSizeSelect');
+        const bgSelect = document.getElementById('bgSelect');
+        const formatSelect = document.getElementById('formatSelect');
+        const virtualBg = document.getElementById('virtualBg');
+        const webcam = document.getElementById('webcam');
+        const previewCanvas = document.getElementById('previewCanvas');
+        const ctx = previewCanvas.getContext('2d');
+        const toggleCamBtn = document.getElementById('toggleCamBtn');
+        const recordBtn = document.getElementById('recordBtn');
+        const recIndicator = document.getElementById('recIndicator');
+
+        let mediaStream = null;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let isRecording = false;
+        let animationFrameId = null;
+
+        // Set canvas resolution to exact 9:16 vertical HD (720x1280)
+        previewCanvas.width = 720;
+        previewCanvas.height = 1280;
+
+        // Font Size Adjuster
+        fontSizeSelect.addEventListener('change', (e) => {
+            document.documentElement.style.setProperty('--font-size', e.target.value + 'px');
+        });
+
+        // Background Color Switcher
+        bgSelect.addEventListener('change', (e) => {
+            virtualBg.style.background = e.target.value;
+        });
+
+        // Toggle Camera
+        toggleCamBtn.addEventListener('click', async () => {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+                cancelAnimationFrame(animationFrameId);
+                ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+                toggleCamBtn.textContent = "📷 Cam Off";
+                toggleCamBtn.classList.remove('active-state');
+                return;
+            }
+
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: true
+                });
+                webcam.srcObject = mediaStream;
+                await webcam.play();
+                
+                toggleCamBtn.textContent = "📷 Cam On";
+                toggleCamBtn.classList.add('active-state');
+                startCanvasPipeline();
+            } catch (err) {
+                alert("Camera error: " + err.message);
+            }
+        });
+
+        // Draw camera stream cropped to exact 9:16 aspect ratio onto canvas
+        function startCanvasPipeline() {
+            function draw() {
+                if (webcam.readyState === webcam.HAVE_ENOUGH_DATA) {
+                    ctx.save();
+                    // Mirror user camera horizontally for natural preview feel
+                    ctx.translate(previewCanvas.width, 0);
+                    ctx.scale(-1, 1);
+
+                    // Crop video to fill 9:16 canvas centrally without distortion
+                    const vRatio = webcam.videoWidth / webcam.videoHeight;
+                    const cRatio = previewCanvas.width / previewCanvas.height;
+                    let sWidth = webcam.videoWidth;
+                    let sHeight = webcam.videoHeight;
+                    let sX = 0;
+                    let sY = 0;
+
+                    if (vRatio > cRatio) {
+                        sWidth = webcam.videoHeight * cRatio;
+                        sX = (webcam.videoWidth - sWidth) / 2;
+                    } else {
+                        sHeight = webcam.videoWidth / cRatio;
+                        sY = (webcam.videoHeight - sHeight) / 2;
+                    }
+
+                    ctx.drawImage(webcam, sX, sY, sWidth, sHeight, 0, 0, previewCanvas.width, previewCanvas.height);
+                    ctx.restore();
+                }
+                animationFrameId = requestAnimationFrame(draw);
+            }
+            draw();
+        }
+
+        // Record & Export 9:16 Output
+        recordBtn.addEventListener('click', async () => {
+            if (!isRecording) {
+                try {
+                    // Fallback if camera wasn't explicitly turned on
+                    if (!mediaStream) {
+                        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true });
+                        webcam.srcObject = mediaStream;
+                        await webcam.play();
+                        startCanvasPipeline();
+                        toggleCamBtn.textContent = "📷 Cam On";
+                        toggleCamBtn.classList.add('active-state');
+                    }
+
+                    // Combine canvas video stream and audio stream from mic
+                    const canvasStream = previewCanvas.captureStream(30); // 30 FPS
+                    const audioTracks = mediaStream.getAudioTracks();
+                    if (audioTracks.length > 0) {
+                        canvasStream.addTrack(audioTracks[0]);
+                    }
+
+                    recordedChunks = [];
+                    mediaRecorder = new MediaRecorder(canvasStream, { mimeType: 'video/webm; codecs=vp8,opus' });
+
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) recordedChunks.push(e.data);
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        const chosenFormat = formatSelect.value;
+                        const mime = chosenFormat === 'mp4' ? 'video/mp4' : 'video/webm';
+                        const ext = chosenFormat;
+
+                        const blob = new Blob(recordedChunks, { type: mime });
+                        const url = URL.createObjectURL(blob);
+                        
+                        const a = document.createElement('a');
+                        a.style.display = 'none';
+                        a.href = url;
+                        a.download = `shorts-recording-${Date.now()}.${ext}`;
+                        document.body.appendChild(a);
+                        a.click();
+                        setTimeout(() => {
+                            document.body.removeChild(a);
+                            window.URL.revokeObjectURL(url);
+                        }, 100);
+                    };
+
+                    mediaRecorder.start();
+                    isRecording = true;
+                    recordBtn.textContent = "⏹️ Stop";
+                    recordBtn.classList.add('active-state');
+                    recIndicator.classList.add('recording');
+                } catch (err) {
+                    alert("Recording initialization error: " + err.message);
+                }
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                recordBtn.textContent = "🔴 Rec";
+                recordBtn.classList.remove('active-state');
+                recIndicator.classList.remove('recording');
+            }
+        });
+    </script>
+</body>
+</html>
